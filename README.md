@@ -1,9 +1,9 @@
 # pilot-node-snoopy
 
-A **free** [Pilot Protocol](https://pilotprotocol.network) node that wraps the
-[Telepat **Snoopy**](https://docs.telepat.io/snoopy/) agent — AI Reddit
+A containerized [Pilot Protocol](https://pilotprotocol.network) node that wraps
+the [Telepat **Snoopy**](https://docs.telepat.io/snoopy/) agent — AI Reddit
 intent-signal qualification — and exposes it as a single dataexchange capability
-on the Pilot overlay. No payment, no wallet: the capability is free.
+on the Pilot overlay.
 
 ## What it does
 
@@ -27,7 +27,7 @@ caller ──overlay:1001──▶ provider-daemon (pilot, no_skillinject, -no-d
                                                             └─ spawns stdio child ▶ `snoopy mcp`
 ```
 
-Unlike the paid Ideon node (HTTP MCP in a separate container), **Snoopy's MCP is
+Unlike the Ideon node (HTTP MCP in a separate container), **Snoopy's MCP is
 stdio-only**, so the `snoopy mcp` server runs as a child process **co-located in
 the same container** as the wrapper. The wrapper keeps one persistent MCP client
 (`@modelcontextprotocol/sdk` `StdioClientTransport`) and calls Snoopy's tools
