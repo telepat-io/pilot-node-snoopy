@@ -1,0 +1,10 @@
+# Keep the wrapper build context small; the Dockerfile installs its own deps.
+app/node_modules
+app/bin
+node_modules
+bundles
+build
+dist
+secure
+.env
+.git

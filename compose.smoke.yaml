@@ -1,0 +1,119 @@
+# compose.smoke.yaml — local network for the io.telepat.snoopy node smoke test.
+#
+#   rendezvous (registry :9000 / beacon :9001 / dashboard :3000)
+#        ▲                    ▲
+#   provider-daemon       caller-daemon
+#     └─ io.telepat.snoopy (supervised; OUR app — listens dataexchange :1001)
+#        └─ stdio MCP child: `snoopy mcp` (co-located in the same container)
+#
+# `pilot-net` is a normal bridge (NOT internal): the ZERO-LLM smoke ops
+# (op:"jobs", op:"leads") need no egress, but leaving egress on lets the lead
+# also drive op:"qualify" (needs Reddit public JSON + OpenRouter) from the same
+# topology by setting TELEPAT_OPENROUTER_KEY.
+#
+# The pilot image is the no_skillinject build; HOME is the container-local
+# /home/pilot; only ./bundles and ./scripts are mounted (read-only). All writable
+# state lives under /home/pilot on named volumes. NO host path is mounted.
+#
+# Prereq: scripts/build.sh (builds images + signed bundle, reuses pilot:dev).
+name: snoopy-smoke
+
+networks:
+  pilot-net:
+    driver: bridge
+
+volumes:
+  pilot-state:   # provider identity + app-store install root (.pilot/apps) + snoopy state
+  caller-run:    # caller daemon IPC socket, shared with the smoke-test client
+
+x-pilot-env: &pilot-env
+  HOME: /home/pilot
+  PILOT_SOCKET: /home/pilot/run/pilot.sock
+  IDENTITY_PATH: /home/pilot/.pilot/identity.json
+  RENDEZVOUS_REGISTRY: rendezvous:9000
+  RENDEZVOUS_BEACON: rendezvous:9001
+
+services:
+
+  rendezvous:
+    image: pilot-protocol/pilot:dev
+    command: ["rendezvous", "-registry-addr", ":9000", "-beacon-addr", ":9001", "-http", ":3000", "-store", "/home/pilot/reg.json", "-log-level", "info"]
+    environment: { HOME: /home/pilot }
+    networks: [pilot-net]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:3000/healthz',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 3s
+      timeout: 4s
+      retries: 30
+      start_period: 4s
+
+  provider-daemon:
+    image: pilot-protocol/snoopy-runtime:dev
+    entrypoint: ["/scripts/provider-entrypoint.sh"]
+    environment:
+      <<: *pilot-env
+      HOSTNAME_PILOT: provider
+      LOG_LEVEL: debug
+      APP_BUNDLE: /bundles/io.telepat.snoopy
+      PILOT_LIB_PATH: /opt/libpilot.so
+      # Snoopy state on the persistent pilot-state volume (proven writable by the
+      # pilot user — the daemon already writes .pilot/apps + identity.json there).
+      SNOOPY_ROOT_DIR: /home/pilot/.pilot/snoopy
+      # Model settings — seeded into Snoopy's SQLite by the wrapper at startup
+      # (via the MCP snoopy_settings_set tool; Snoopy has no native env override).
+      SNOOPY_MODEL: ${SNOOPY_MODEL:-deepseek/deepseek-v4-flash}
+      SNOOPY_TEMPERATURE: ${SNOOPY_TEMPERATURE:-0.3}
+      SNOOPY_MAX_TOKENS: ${SNOOPY_MAX_TOKENS:-800}
+      SNOOPY_TOP_P: ${SNOOPY_TOP_P:-1}
+      # OpenRouter key — required ONLY for op:"qualify" (the LLM path). Empty is
+      # fine for the zero-LLM smoke (jobs/leads).
+      TELEPAT_OPENROUTER_KEY: ${TELEPAT_OPENROUTER_KEY:-}
+      # Optional default monitoring job (seeded only if no jobs exist yet).
+      SNOOPY_DEFAULT_JOB_NAME: ${SNOOPY_DEFAULT_JOB_NAME:-default snoopy watch}
+      SNOOPY_DEFAULT_SUBREDDITS: ${SNOOPY_DEFAULT_SUBREDDITS:-startups,SaaS}
+      SNOOPY_DEFAULT_PROMPT: ${SNOOPY_DEFAULT_PROMPT:-People asking for recommendations for a tool like ours.}
+      # Reddit OAuth (OPTIONAL — dormant unless set). Enables authenticated scans
+      # where Reddit blocks unauthenticated datacenter IPs (HTTP 403). client_id +
+      # app_name are seeded into Snoopy's settings DB by the entrypoint; the secret
+      # is read directly by `snoopy mcp` from this env var.
+      SNOOPY_REDDIT_CLIENT_ID: ${SNOOPY_REDDIT_CLIENT_ID:-}
+      SNOOPY_REDDIT_APP_NAME: ${SNOOPY_REDDIT_APP_NAME:-}
+      SNOOPY_REDDIT_CLIENT_SECRET: ${SNOOPY_REDDIT_CLIENT_SECRET:-}
+    volumes:
+      - ./bundles:/bundles:ro
+      - ./scripts:/scripts:ro
+      - ./build/libpilot.so:/opt/libpilot.so:ro
+      - pilot-state:/home/pilot/.pilot
+    networks: [pilot-net]
+    depends_on:
+      rendezvous: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /home/pilot/.pilot/apps/io.telepat.snoopy/app.sock"]
+      interval: 3s
+      timeout: 3s
+      retries: 50
+      start_period: 12s
+
+  caller-daemon:
+    image: pilot-protocol/pilot:dev
+    command: ["pilot-daemon", "-registry", "rendezvous:9000", "-beacon", "rendezvous:9001", "-socket", "/home/pilot/run/pilot.sock", "-identity", "/home/pilot/identity.json", "-public", "-trust-auto-approve", "-hostname", "caller", "-log-level", "debug"]
+    environment:
+      <<: *pilot-env
+      HOSTNAME_PILOT: caller
+    # run as root so the daemon can create its IPC socket inside the (root-owned)
+    # named volume; the smoke-test client (also root) then reads it. Ephemeral
+    # smoke scaffolding only — the provider keeps the non-root layout.
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /home/pilot/run && exec \"$0\" \"$@\""]
+    volumes:
+      - caller-run:/home/pilot/run
+      - ./scripts:/scripts:ro
+    networks: [pilot-net]
+    depends_on:
+      rendezvous: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "test -S /home/pilot/run/pilot.sock"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+      start_period: 6s

@@ -1,0 +1,24 @@
+{
+  "id": "io.telepat.snoopy",
+  "app_version": "0.1.0",
+  "manifest_version": 1,
+  "binary": {
+    "runtime": "node",
+    "path": "bin/main.js",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "exposes": [],
+  "grants": [
+    {"cap": "fs.write", "target": "$APP/*"},
+    {"cap": "fs.read",  "target": "$APP/*"},
+    {"cap": "audit.log", "target": "*"},
+    {"cap": "net.dial", "target": "*.pilot",
+     "if": {"kind": "rate", "params": {"per": "min", "limit": 60}}}
+  ],
+  "depends": [],
+  "protection": "guarded",
+  "store": {
+    "publisher": "ed25519:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "signature": "sig:placeholder-replaced-by-build.sh"
+  }
+}
